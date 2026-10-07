@@ -396,7 +396,10 @@ export async function updateRules(
 
   const buffer = await response.arrayBuffer();
   const data = new Uint8Array(buffer);
-  inspectRuleData(data);
+  // The rules list is only a few MB and hashes in ~1ms, whereas inspectRuleData
+  // has to walk every byte (~11ms). Hash first so the common "list did not
+  // change" run skips that walk entirely, staying well inside the Free plan's
+  // 10ms CPU budget; the scan then runs once, on an actually-new list.
   const sha256 = await sha256Hex(buffer);
   const version = `rules:data:${sha256}`;
   const oldManifest = await readManifest(env);
@@ -407,6 +410,8 @@ export async function updateRules(
   ) {
     return "unchanged";
   }
+
+  const index = inspectRuleData(data);
 
   await env.RULES_KV.put(version, buffer);
   const stored = await env.RULES_KV.get(version, "arrayBuffer");
@@ -441,12 +446,7 @@ export async function updateRules(
       // 旧版本清理失败不影响已经完成的原子切换。
     }
   }
-  cachedRules = {
-    version,
-    data,
-    index: inspectRuleData(data),
-    checkedAt: Date.now()
-  };
+  cachedRules = { version, data, index, checkedAt: Date.now() };
   return "updated";
 }
 
